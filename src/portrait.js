@@ -5,18 +5,18 @@
 import { makeRng, gauss } from './shapes.js';
 
 const S = 3.0;      // высота портрета в мировых единицах
-const IMG_H = 1312; // высота референса (ориентиры заданы для 1199x1312)
-const CX = 567;     // ось лица, px
+const IMG_H = 1128; // высота референса (ориентиры заданы для 1394x1128)
+const CX = 690;     // ось лица, px
 const CY = 575;     // пиксель, который попадает в y = 0
 const K = S / IMG_H;
 const px2w = (x, y) => [(x - CX) * K, (CY - y) * K];
 
 // ориентиры лица на референсе, px
 const LM_PX = {
-  eyeL: [471, 431], eyeR: [659, 431],
-  mouth: [567, 618], mouthHW: 62,
-  browY: 392, chinY: 700, neckY: 800,
-  pivot: [568, 790],
+  eyeL: [590, 472], eyeR: [787, 472],
+  mouth: [690, 655], mouthHW: 55,
+  browY: 432, chinY: 765, neckY: 860,
+  pivot: [690, 850],
 };
 
 export const LM = {
@@ -24,12 +24,15 @@ export const LM = {
   mouth: px2w(...LM_PX.mouth), mouthHW: LM_PX.mouthHW * K,
   browY: px2w(0, LM_PX.browY)[1], chinY: px2w(0, LM_PX.chinY)[1], neckY: px2w(0, LM_PX.neckY)[1],
   pivot: px2w(...LM_PX.pivot),
+  faceC: [0, px2w(0, 618)[1]],       // центр лица (между глазами и подбородком)
+  faceR: [0.55, 0.65],               // полуоси эллипса лица (где шум и голос почти не двигают точки)
+  bottomY: px2w(0, IMG_H)[1],        // нижний край картинки: ниже него частицы гаснут
 };
 
 // купол лица и купол плеч: даёт объём при повороте головы
 function depthAt(x, y) {
-  const face = 0.30 * Math.exp(-((x / 0.46) ** 2 + ((y - 0.12) / 0.62) ** 2));
-  const body = 0.22 * Math.exp(-((x / 1.15) ** 2 + ((y + 0.95) / 0.6) ** 2));
+  const face = 0.30 * Math.exp(-((x / 0.5) ** 2 + ((y + 0.1) / 0.62) ** 2));
+  const body = 0.22 * Math.exp(-((x / 1.4) ** 2 + ((y + 0.9) / 0.6) ** 2));
   return Math.max(face, body);
 }
 
@@ -42,7 +45,7 @@ function loadImage(url) {
   });
 }
 
-export async function loadPortrait(url, { count = 220000, seed = 5 } = {}) {
+export async function loadPortrait(url, { count = 440000, seed = 5 } = {}) {
   const img = await loadImage(url);
   const W = img.naturalWidth, H = img.naturalHeight;
   if (H !== IMG_H) throw new Error(`ожидался портрет высотой ${IMG_H}px, получено ${H}px`);
@@ -71,7 +74,7 @@ export async function loadPortrait(url, { count = 220000, seed = 5 } = {}) {
 
   const put = (wx, wy, wz, r, g, b, br, kd, rg) => {
     // нормаль: в ауре - радиально наружу, на лице - к зрителю
-    const dx = wx, dy = wy - 0.1, d = Math.hypot(dx, dy) + 1e-4;
+    const dx = wx, dy = wy - LM.faceC[1], d = Math.hypot(dx, dy) + 1e-4;
     const wr = Math.min(1, Math.max(0, (d - 0.35) / 0.75));
     let nx = (dx / d) * wr, ny = (dy / d) * wr, nz = (1 - wr) * 0.8 + 0.2;
     const l = Math.hypot(nx, ny, nz);
@@ -97,7 +100,7 @@ export async function loadPortrait(url, { count = 220000, seed = 5 } = {}) {
     const [wx, wy] = px2w(ix + rnd() - 0.5, iy + rnd() - 0.5);
     const zd = depthAt(wx, wy);
     const far = 1 - Math.min(1, zd / 0.15);
-    const wz = zd + gauss(rnd) * 0.03 * (1 + far * 2) - far * rnd() * 0.3;
+    const wz = zd + gauss(rnd) * 0.02 * (1 + far) - far * rnd() * 0.06;   // малый разброс глубины: иначе перспектива даёт радиальные «лучи»
     put(wx, wy, wz, nr, ng, nb, v, orange ? 2 : white ? 1 : 0, 0);
   }
 
@@ -128,7 +131,7 @@ export async function loadPortrait(url, { count = 220000, seed = 5 } = {}) {
 
   // ---- 4. брови и веки
   for (const [ex, side] of [[LM_PX.eyeL[0], -1], [LM_PX.eyeR[0], 1]]) {
-    arc(550, (t) => [ex + 56 * t, 396 - 12 * h(t) + side * t * 4], 3, [0.2, 0.5, 0.9], 0.5, 4, 0.03);
+    arc(550, (t) => [ex + 56 * t, LM_PX.browY + 4 - 12 * h(t) + side * t * 4], 3, [0.2, 0.5, 0.9], 0.5, 4, 0.03);
     arc(400, (t) => [ex + 44 * t, LM_PX.eyeL[1] - 8 - 20 * h(t)], 2, [0.2, 0.5, 0.9], 0.5, 5, 0.03);
     arc(400, (t) => [ex + 44 * t, LM_PX.eyeL[1] + 6 + 12 * h(t)], 2, [0.2, 0.5, 0.9], 0.5, 5, 0.03);
   }

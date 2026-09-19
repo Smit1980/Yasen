@@ -36,6 +36,11 @@ uniform float uBrowY;
 uniform float uChinY;
 uniform float uNeckY;
 uniform vec2 uPivot;
+uniform vec2 uFaceC;
+uniform vec2 uFaceR;
+uniform float uBottomY;
+uniform float uIntroT;
+uniform float uIntroLen;
 // цвет
 uniform vec3 uAccent;
 uniform float uHue;
@@ -132,7 +137,29 @@ vec3 faceDelta(vec3 r, out float glow) {
   return d;
 }
 
+// Поток частиц для интро: три ленты, плывущие через сцену
+vec3 riverPos(float t) {
+  float lane = floor(aSeed.y * 3.0);
+  float lf = fract(aSeed.y * 3.0) - 0.5;
+  float u = fract(aSeed.x * 7.13 + t * (0.07 + 0.02 * lane));
+  float ang = u * 6.2832;
+  float x = mix(-4.6, 4.6, u);
+  float y = (0.65 + 0.2 * lane) * sin(ang * 1.2 + t * 0.4 + lane * 2.1) + (lane - 1.0) * 0.55;
+  float z = 0.9 * sin(ang + lane * 1.7 + t * 0.25);
+  vec3 p = vec3(x, y + lf * 0.55, z + (fract(aSeed.z * 13.7) - 0.5) * 0.5);
+  p.y += (vnoise(vec3(x * 0.9, t * 0.3, lane)) - 0.5) * 0.4;
+  return p;
+}
+
 void main() {
+  // слой свечения рисует только часть частиц: остальные отсекаем сразу
+  if (uGlow > 0.5 && aSeed.x > 0.22) {
+    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+    gl_PointSize = 0.0;
+    vColor = vec3(0.0);
+    vAlpha = 0.0;
+    return;
+  }
   // морфинг между формами: точки стартуют не одновременно
   float t = clamp(uMix * 1.4 - aSeed.x * 0.4, 0.0, 1.0);
   float m = smoothstep(0.0, 1.0, t);
@@ -164,14 +191,15 @@ void main() {
   }
 
   // внутри лица шум и голос почти не двигают точки, чтобы черты оставались чёткими
-  float fx = aRest.x / 0.5;
-  float fy = (aRest.y - 0.1) / 0.62;
+  float fx = (aRest.x - uFaceC.x) / uFaceR.x;
+  float fy = (aRest.y - uFaceC.y) / uFaceR.y;
   float wob = 1.0 - 0.85 * headW * exp(-(fx * fx + fy * fy));
   float isCore = step(1.5, aKind) * step(aKind, 2.5);
   float kindAmp = mix(1.0, 0.55, isCore);
 
   // «дыхание» и шум
-  float n = vnoise(p * 2.0 + vec3(0.0, uTime * 0.35, aSeed.y * 3.0));
+  // шум согласован в пространстве (без случайного сдвига на частицу): соседи дышат вместе, иначе получаются радиальные «лучи»
+  float n = vnoise(p * 1.6 + vec3(0.0, uTime * 0.35, 0.0));
   p += nrm * (n - 0.5) * 0.03 * (1.0 + uHigh * 4.0) * wob;
 
   // голос: общая амплитуда и кольцевые волны от низких частот
@@ -197,12 +225,22 @@ void main() {
   float dl = length(dv);
   p += normalize(dv + 1e-4) * exp(-dl * dl * 6.0) * 0.18;
 
-  if (uGlow > 0.5 && aSeed.x > 0.22) {
-    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
-    gl_PointSize = 0.0;
-    vColor = vec3(0.0);
-    vAlpha = 0.0;
-    return;
+  // интро: частицы плывут потоком, затем по очереди отрываются и собираются в лицо
+  // (сначала контур и плечи, в конце лицо)
+  float yFade = p.y;
+  float introA = 1.0;
+  if (uIntroT < uIntroLen) {
+    float order = 1.0 - smoothstep(0.15, 1.7, length(aRest.xy - uFaceC));
+    float t0 = 0.25 + 3.4 * order + 0.5 * aSeed.y;
+    float dur = 1.7 + 1.5 * aSeed.z;
+    float mi = clamp((uIntroT - t0) / dur, 0.0, 1.0);
+    mi = mi * mi * mi * (mi * (mi * 6.0 - 15.0) + 10.0);
+    vec3 sp = riverPos(min(uIntroT, t0));
+    vec3 dirv = p - sp;
+    vec3 perp = normalize(cross(dirv, vec3(0.0, 0.0, 1.0)) + vec3(0.0001));
+    float arc = sin(3.14159 * mi) * (aSeed.z * 2.0 - 1.0) * 0.18 * length(dirv);
+    p = mix(sp, p, mi) + perp * arc;
+    introA = smoothstep(0.0, 0.9, uIntroT);
   }
   vec4 mv = modelViewMatrix * vec4(p, 1.0);
   gl_Position = projectionMatrix * mv;
@@ -220,8 +258,8 @@ void main() {
   float pulse = 1.0 + isCore * uAmp * 0.5 * (0.5 + 0.5 * sin(p.y * 10.0 - uTime * 4.0));
   vColor = col * glow * pulse * mix(1.0, 0.8, isCore);
 
-  float fade = smoothstep(-1.75, -1.3, p.y);
-  vAlpha = (0.5 + 0.5 * sin(uTime * 2.0 + aSeed.x * 40.0)) * (0.4 + 0.6 * aBright) * vis * fade * (1.0 - 0.45 * bok) * uIntensity;
+  float fade = smoothstep(uBottomY, uBottomY + 0.35, yFade);
+  vAlpha = (0.5 + 0.5 * sin(uTime * 2.0 + aSeed.x * 40.0)) * (0.4 + 0.6 * aBright) * vis * fade * (1.0 - 0.45 * bok) * uIntensity * introA;
 }
 `;
 

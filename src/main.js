@@ -8,14 +8,18 @@ import { Face } from './face.js';
 import { Tracker } from './tracking.js';
 import { Reader, decodeText } from './reader.js';
 
+// ---- интро: лицо собирается из потока частиц (?intro=0 - пропустить)
+const INTRO_LEN = 8.2;
+let introT = new URLSearchParams(location.search).get('intro') === '0' ? INTRO_LEN + 1 : 0;
+
 // ---------------------------------------------------------------- состояния
 const c3 = (r, g, b) => new THREE.Color(r, g, b);
 // hue - поворот оттенка «голубого» тела (рад), accent - цвет оранжевых точек
 const STATES = {
-  idle:      { label: 'покой',   hue: 0,    accent: c3(1.0, 0.60, 0.15), swirl: 0, contract: 0,   ampGain: 0.25, intensity: 0.7,  spin: 0.10 },
-  listening: { label: 'слушает', hue: -0.5, accent: c3(0.40, 1.0, 0.75), swirl: 0, contract: 1,   ampGain: 0.9,  intensity: 0.8,  spin: 0.05 },
-  thinking:  { label: 'думает',  hue: 0.9,  accent: c3(1.0, 0.35, 0.80), swirl: 1, contract: 0.3, ampGain: 0.25, intensity: 0.85, spin: 0.55 },
-  speaking:  { label: 'говорит', hue: 0,    accent: c3(1.0, 0.62, 0.15), swirl: 0, contract: 0,   ampGain: 1.0,  intensity: 0.8,  spin: 0.12 },
+  idle:      { label: 'покой',   hue: 0,    accent: c3(1.0, 0.60, 0.15), swirl: 0, contract: 0,   ampGain: 0.25, intensity: 1.1,  spin: 0.10 },
+  listening: { label: 'слушает', hue: -0.5, accent: c3(0.40, 1.0, 0.75), swirl: 0, contract: 1,   ampGain: 0.9,  intensity: 1.1,  spin: 0.05 },
+  thinking:  { label: 'думает',  hue: 0.9,  accent: c3(1.0, 0.35, 0.80), swirl: 1, contract: 0.3, ampGain: 0.25, intensity: 1.15, spin: 0.55 },
+  speaking:  { label: 'говорит', hue: 0,    accent: c3(1.0, 0.62, 0.15), swirl: 0, contract: 0,   ampGain: 1.0,  intensity: 1.1,  spin: 0.12 },
 };
 
 const ui = {
@@ -29,7 +33,7 @@ ui.status.textContent = 'загрузка портрета…';
 let portrait;
 try {
   // ?points=120000 - меньше частиц для слабых видеокарт
-  const points = Number(new URLSearchParams(location.search).get('points')) || 220000;
+  const points = Number(new URLSearchParams(location.search).get('points')) || 440000;
   portrait = await loadPortrait('assets/portrait.webp', { count: points });
 } catch (e) {
   ui.status.textContent = `ошибка: ${e.message}. Откройте страницу через run.bat (http://127.0.0.1:8780/), а не файлом.`;
@@ -68,7 +72,7 @@ geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 10);
 const V2 = (a) => new THREE.Vector2(a[0], a[1]);
 const shared = {
   uTime: { value: 0 }, uMix: { value: 0 }, uAmp: { value: 0 }, uBass: { value: 0 }, uMid: { value: 0 }, uHigh: { value: 0 },
-  uSwirl: { value: 0 }, uContract: { value: 0 }, uBurst: { value: 0 }, uPixelRatio: { value: 1 }, uCamZ: { value: 4.7 }, uSize: { value: 2.2 },
+  uSwirl: { value: 0 }, uContract: { value: 0 }, uBurst: { value: 0 }, uPixelRatio: { value: 1 }, uCamZ: { value: 4.7 }, uSize: { value: 1.75 },
   uPointer: { value: new THREE.Vector3(99, 99, 99) },
   uFromHead: { value: 1 }, uToHead: { value: 1 },
   uOpen: { value: 0 }, uWide: { value: 0 }, uSmile: { value: 0 }, uPucker: { value: 0 }, uBlink: { value: 0 },
@@ -76,6 +80,8 @@ const shared = {
   uMouth: { value: V2(LM.mouth) }, uMouthHW: { value: LM.mouthHW },
   uEyeL: { value: V2(LM.eyeL) }, uEyeR: { value: V2(LM.eyeR) },
   uBrowY: { value: LM.browY }, uChinY: { value: LM.chinY }, uNeckY: { value: LM.neckY }, uPivot: { value: V2(LM.pivot) },
+  uFaceC: { value: V2(LM.faceC) }, uFaceR: { value: V2(LM.faceR) }, uBottomY: { value: LM.bottomY },
+  uIntroT: { value: 0 }, uIntroLen: { value: INTRO_LEN },
   uAccent: { value: STATES.idle.accent.clone() }, uHue: { value: 0 }, uIntensity: { value: 1 },
 };
 const mkMat = (glow) => new THREE.ShaderMaterial({
@@ -89,11 +95,12 @@ group.add(new THREE.Points(geo, mkMat(1)));   // мягкое свечение (
 let debugView = null;   // {z, y}: приближение для отладки (orb.view)
 function resize() {
   const w = window.innerWidth, h = window.innerHeight;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // ?dpr=1 - рисовать без учёта масштаба экрана (быстрее на слабых видеокартах и 4K)
+  const dpr = Math.min(window.devicePixelRatio || 1, Number(new URLSearchParams(location.search).get('dpr')) || 2);
   renderer.setPixelRatio(dpr);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
-  const z = debugView ? debugView.z : 4.7 * Math.max(1, 0.72 / camera.aspect);
+  const z = debugView ? debugView.z : 4.7 * Math.max(1, 1.14 / camera.aspect);
   camera.position.set(0, debugView ? debugView.y : 0, z);
   camera.updateProjectionMatrix();
   // пикселей на мировую единицу: по нему масштабируется размер частиц
@@ -393,7 +400,7 @@ tp.file.addEventListener('change', () => { const f = tp.file.files[0]; if (f) lo
 // публичный API для отладки и встраивания
 window.orb = {
   setState, setShape, setVoice, showCaption, playUrl, setDemo, burst: (v = 1) => { burst = v; },
-  audio, face, shared, camera, reader, startReading, replay, STATES: Object.keys(STATES), VOICES: VOICE_NAMES,
+  audio, face, shared, camera, reader, startReading, replay, replayIntro, STATES: Object.keys(STATES), VOICES: VOICE_NAMES,
 };
 
 // ---------------------------------------------------------------- UI
@@ -411,6 +418,7 @@ function syncUi() {
   q('#btn-text').classList.toggle('on', !tp.panel.hidden);
   tp.read.textContent = reader.running ? 'С начала' : 'Читать';
   const bits = [`<b>${STATES[state].label}</b>`, shapeName, `голос: ${VOICES[voiceName].label.toLowerCase()}`];
+  if (introT < INTRO_LEN) bits.push('сборка…');
   if (reader.running && readProg.n) bits.push(`чтение ${readProg.i}/${readProg.n}`);
   if (wsOk) bits.push('агент подключён');
   if (camStatus) bits.push(camStatus);
@@ -427,6 +435,7 @@ q('#btn-sfx').addEventListener('click', () => { audio.sfxOn = !audio.sfxOn; sync
 q('#btn-replay').addEventListener('click', () => { wake(); replay(); });
 q('#btn-loop').addEventListener('click', toggleLoop);
 q('#btn-text').addEventListener('click', () => openPanel(tp.panel.hidden));
+q('#btn-intro').addEventListener('click', replayIntro);
 
 const KEYS = { 1: 'idle', 2: 'listening', 3: 'thinking', 4: 'speaking' };
 const VOICE_KEYS = { 5: 'clean', 6: 'assistant', 7: 'vocoder', 8: 'choir' };
@@ -441,6 +450,7 @@ window.addEventListener('keydown', (e) => {
   else if (VOICE_KEYS[k]) { wake(); setVoice(VOICE_KEYS[k]); }
   else if (SHAPE_KEYS[k]) { wake(); setShape(SHAPE_KEYS[k]); }
   else if (k === 'd') setDemo(!demoOn);
+  else if (k === 'i') replayIntro();
   else if (k === 'p') { wake(); replay(); }
   else if (k === 'l') toggleLoop();
   else if (k === 't') openPanel(tp.panel.hidden);
@@ -460,6 +470,7 @@ function touchBar() {
   barTimer = setTimeout(() => { if (!ui.bar.matches(':hover')) ui.bar.classList.add('idle'); }, 5000);
 }
 touchBar();
+if (introT < INTRO_LEN) ui.bar.classList.add('idle');   // на время интро панель скрыта до движения мыши
 window.addEventListener('keydown', touchBar);
 
 // курсор отталкивает частицы
@@ -478,6 +489,7 @@ const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const hit = new THREE.Vector3();
 let rotY = 0, rotX = 0, gestureHold = { n: -2, t: 0 };
 let simTime = 0;
+function replayIntro() { introT = 0; syncUi(); }
 
 function step(dt) {
   simTime += dt;
@@ -503,8 +515,16 @@ function step(dt) {
   // мимика
   const f = face.update(dt, { state, level: audio.level, tone: audio.tone });
   shared.uOpen.value = f.open; shared.uWide.value = f.wide; shared.uSmile.value = f.smile;
-  shared.uPucker.value = f.pucker; shared.uBlink.value = f.blink; shared.uBrow.value = f.brow;
-  shared.uNod.value = f.nod; shared.uTilt.value = f.tilt; shared.uEyeGlow.value = f.eyeGlow;
+  // интро: глаза закрыты, в конце «открываются» со вспышкой
+  if (introT <= INTRO_LEN + 1.2) {
+    introT += dt;
+    if (introT > INTRO_LEN && introT - dt <= INTRO_LEN) syncUi();
+  }
+  shared.uIntroT.value = introT < INTRO_LEN ? introT : 99;
+  const eyesOpen = introT >= INTRO_LEN ? 1 : smooth(INTRO_LEN - 1.4, INTRO_LEN - 0.5, introT);
+  const flare = Math.abs(introT - INTRO_LEN) < 1.2 ? 1.2 * Math.exp(-(((introT - INTRO_LEN) / 0.45) ** 2)) : 0;
+  shared.uPucker.value = f.pucker; shared.uBlink.value = Math.max(f.blink, 1 - eyesOpen); shared.uBrow.value = f.brow;
+  shared.uNod.value = f.nod; shared.uTilt.value = f.tilt; shared.uEyeGlow.value = f.eyeGlow + flare;
   shared.uGaze.value.set(f.gazeX, f.gazeY);
 
   // morph
@@ -538,8 +558,10 @@ function step(dt) {
   } else shared.uPointer.value.set(99, 99, 99);
 }
 
+let frozen = false;   // отладка: orb.freeze(true) останавливает анимацию, кадры рисуются вручную через orb.advance
 function frame() {
-  step(Math.min(clock.getDelta(), 0.05));
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!frozen) step(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
@@ -558,6 +580,7 @@ function handleGesture(n, dt) {
 }
 
 // отладка: промотать анимацию на `seconds` вперёд и отрисовать кадр
+window.orb.freeze = (on = true) => { frozen = on; };
 window.orb.view = (z, y = 0) => { debugView = z ? { z, y } : null; resize(); };
 window.orb.advance = (seconds = 1) => {
   for (let t = 0; t < seconds; t += 1 / 60) step(1 / 60);
