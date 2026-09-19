@@ -1,0 +1,7 @@
+# логи и кэш
+*.log
+__pycache__/
+*.pyc
+.claude/
+.omc/
+node_modules/

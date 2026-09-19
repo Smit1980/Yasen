@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice Orb — визуал голоса ИИ-агента</title>
+<style>
+  :root { --fg: #bfe6ff; --dim: #5d7d96; --accent: #3ab0ff; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #02050b; overflow: hidden;
+    font: 13px/1.4 system-ui, "Segoe UI", sans-serif; color: var(--fg); }
+  canvas#stage { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #vignette { position: fixed; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 45%, transparent 35%, rgba(0,0,0,.65) 100%); }
+  #status { position: fixed; top: 14px; left: 18px; letter-spacing: .18em; text-transform: uppercase;
+    font-size: 11px; color: var(--dim); }
+  #status b { color: var(--fg); font-weight: 600; }
+  #caption { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); max-width: min(80vw, 760px);
+    text-align: center; font-size: 17px; color: #d8f0ff; text-shadow: 0 0 18px rgba(60,170,255,.6);
+    opacity: 0; transition: opacity .4s; pointer-events: none; }
+  #caption.on { opacity: 1; }
+  #bar { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); display: flex; gap: 6px;
+    flex-wrap: wrap; justify-content: center; padding: 8px; max-width: 96vw;
+    background: rgba(6,14,26,.62); border: 1px solid rgba(80,160,255,.22); border-radius: 14px;
+    backdrop-filter: blur(10px); transition: opacity .4s; }
+  #bar.hidden, #bar.idle { opacity: 0; pointer-events: none; }
+  #bar .sep { width: 1px; background: rgba(80,160,255,.22); margin: 2px 4px; }
+  button, label.btn { font: inherit; color: var(--fg); background: rgba(40,90,150,.18); cursor: pointer;
+    border: 1px solid rgba(80,160,255,.25); border-radius: 9px; padding: 6px 11px; }
+  button:hover, label.btn:hover { background: rgba(60,130,220,.32); }
+  button.on { background: rgba(58,176,255,.35); border-color: var(--accent); }
+  button:focus-visible, label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  kbd { color: var(--dim); font: inherit; font-size: 10px; margin-left: 4px; }
+  #hint { position: fixed; right: 18px; top: 14px; font-size: 11px; color: var(--dim); text-align: right; }
+  input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+  button:disabled { opacity: .4; cursor: default; }
+  #textpanel { position: fixed; right: 18px; top: 44px; width: min(440px, 92vw); display: flex; flex-direction: column;
+    gap: 8px; padding: 12px; background: rgba(6,14,26,.82); border: 1px solid rgba(80,160,255,.28);
+    border-radius: 14px; backdrop-filter: blur(10px); }
+  #textpanel[hidden] { display: none; }
+  #textpanel .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  #textpanel .row.head { justify-content: space-between; }
+  #textpanel textarea { width: 100%; min-height: 130px; resize: vertical; font: inherit; color: var(--fg);
+    background: rgba(2,8,18,.7); border: 1px solid rgba(80,160,255,.25); border-radius: 9px; padding: 8px 10px; }
+  #textpanel select { font: inherit; color: var(--fg); background: rgba(40,90,150,.25);
+    border: 1px solid rgba(80,160,255,.25); border-radius: 9px; padding: 5px 8px; max-width: 200px; }
+  #textpanel input[type=range] { width: 110px; accent-color: var(--accent); }
+  #tp-note { font-size: 11px; color: var(--dim); }
+  #tp-progress { font-size: 11px; color: var(--dim); }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="vignette"></div>
+<div id="status"></div>
+<div id="hint">H — скрыть панель · F — во весь экран · панель прячется сама, двиньте мышью</div>
+<div id="caption"></div>
+
+<div id="bar">
+  <button data-state="idle">Покой<kbd>1</kbd></button>
+  <button data-state="listening">Слушает<kbd>2</kbd></button>
+  <button data-state="thinking">Думает<kbd>3</kbd></button>
+  <button data-state="speaking">Говорит<kbd>4</kbd></button>
+  <div class="sep"></div>
+  <button data-shape="head">Гуманоид<kbd>Q</kbd></button>
+  <button data-shape="sphere">Сфера<kbd>W</kbd></button>
+  <button data-shape="wave">Волна<kbd>E</kbd></button>
+  <button data-shape="torus">Портал<kbd>R</kbd></button>
+  <div class="sep"></div>
+  <button data-voice="clean" title="Голос без обработки">Оригинал<kbd>5</kbd></button>
+  <button data-voice="assistant" title="Тёмный синтетический голос по измерениям референса">Ассистент<kbd>6</kbd></button>
+  <button data-voice="vocoder" title="Монотонный робот-вокодер">Вокодер<kbd>7</kbd></button>
+  <button data-voice="choir" title="Несколько слоёв голоса + кольцевая модуляция">Хор<kbd>8</kbd></button>
+  <div class="sep"></div>
+  <button id="btn-demo">Демо-голос<kbd>D</kbd></button>
+  <button id="btn-mic">Микрофон<kbd>M</kbd></button>
+  <label class="btn">Аудиофайл<input id="file" type="file" accept="audio/*"></label>
+  <button id="btn-replay" disabled title="Проиграть последний файл или текст сначала">Повтор<kbd>P</kbd></button>
+  <button id="btn-loop" title="Повторять непрерывно">Цикл<kbd>L</kbd></button>
+  <button id="btn-text" title="Загрузить текст и читать вслух">Текст<kbd>T</kbd></button>
+  <button id="btn-cam">Камера<kbd>C</kbd></button>
+  <button id="btn-sfx" class="on">Звуки<kbd>X</kbd></button>
+</div>
+
+<section id="textpanel" hidden aria-label="Чтение текста">
+  <div class="row head"><b>Чтение текста</b><span id="tp-progress"></span><button id="tp-close" aria-label="Закрыть панель">×</button></div>
+  <textarea id="tp-text" placeholder="Вставьте текст или загрузите файл .txt"></textarea>
+  <div class="row">
+    <label class="btn">Загрузить .txt<input id="tp-file" type="file" accept=".txt,.md,text/plain"></label>
+    <select id="tp-voice" aria-label="Голос чтения"><option value="">Голос: авто</option></select>
+    <label>Скорость <input id="tp-rate" type="range" min="-5" max="5" value="0"></label>
+  </div>
+  <div class="row"><button id="tp-read">Читать</button><button id="tp-stop">Стоп</button><span id="tp-note"></span></div>
+</section>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
