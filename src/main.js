@@ -446,6 +446,7 @@ window.addEventListener('keydown', (e) => {
   if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') { if (e.key === 'Escape') openPanel(false); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
+  if (introT < INTRO_LEN && (k === ' ' || k === 'escape')) { introT = INTRO_LEN; syncUi(); return; }   // пропуск интро
   if (KEYS[k]) { wake(); if (demoOn && KEYS[k] !== 'speaking') setDemo(false); setState(KEYS[k]); }
   else if (VOICE_KEYS[k]) { wake(); setVoice(VOICE_KEYS[k]); }
   else if (SHAPE_KEYS[k]) { wake(); setShape(SHAPE_KEYS[k]); }
@@ -480,7 +481,10 @@ window.addEventListener('pointermove', (e) => {
   pointerNdc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
 });
 window.addEventListener('pointerleave', () => pointerNdc.set(9, 9));
-window.addEventListener('pointerdown', () => { burst = Math.max(burst, 0.6); });
+window.addEventListener('pointerdown', () => {
+  if (introT < INTRO_LEN) { introT = INTRO_LEN; syncUi(); return; }   // клик пропускает интро
+  burst = Math.max(burst, 0.6);
+});
 
 // ---------------------------------------------------------------- цикл
 const clock = new THREE.Clock();
@@ -586,6 +590,9 @@ window.orb.advance = (seconds = 1) => {
   for (let t = 0; t < seconds; t += 1 / 60) step(1 / 60);
   renderer.render(scene, camera);
 };
+
+// формы для морфинга готовим заранее, по одной: иначе первое переключение даёт паузу
+SHAPE_NAMES.filter((n) => n !== 'head').forEach((n, i) => setTimeout(() => generateShape(n, portrait.kind), 2500 + i * 700));
 
 syncUi();
 frame();
