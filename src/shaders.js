@@ -13,6 +13,7 @@ uniform float uSize;
 uniform float uGlow;
 uniform float uCamZ;
 uniform vec3 uPointer;
+uniform vec3 uPointer2;
 
 // мимика (задаётся из face.js)
 uniform float uFromHead;
@@ -230,6 +231,9 @@ void main() {
   vec3 dv = p - uPointer;
   float dl = length(dv);
   p += normalize(dv + 1e-4) * exp(-dl * dl * 6.0) * 0.18;
+  vec3 dv2 = p - uPointer2;
+  float dl2 = length(dv2);
+  p += normalize(dv2 + 1e-4) * exp(-dl2 * dl2 * 6.0) * 0.18;
 
   // интро: частицы плывут потоком, затем по очереди отрываются и собираются в лицо
   // (сначала контур и плечи, в конце лицо)

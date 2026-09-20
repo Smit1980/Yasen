@@ -6,11 +6,17 @@ import { AudioEngine } from './audio.js';
 import { VOICES, VOICE_NAMES } from './voicefx.js';
 import { Face } from './face.js';
 import { Tracker } from './tracking.js';
+import * as S from './settings.js';
+import * as subs from './subtitles.js';
+import * as agent from './agentclient.js';
+import { Dialog } from './dialog.js';
+import { initPanels } from './panels.js';
 import { Reader, decodeText } from './reader.js';
 
 // ---- интро: лицо собирается из потока частиц (?intro=0 - пропустить)
 const INTRO_LEN = 8.2;
 let introT = new URLSearchParams(location.search).get('intro') === '0' ? INTRO_LEN + 1 : 0;
+let introSpeed = 1;      // >1 при перенастройке характера: лицо пересобирается быстрее
 
 // ---------------------------------------------------------------- состояния
 const c3 = (r, g, b) => new THREE.Color(r, g, b);
@@ -24,7 +30,6 @@ const STATES = {
 
 const ui = {
   status: document.getElementById('status'),
-  caption: document.getElementById('caption'),
   bar: document.getElementById('bar'),
 };
 ui.status.textContent = 'загрузка портрета…';
@@ -74,6 +79,7 @@ const shared = {
   uTime: { value: 0 }, uMix: { value: 0 }, uAmp: { value: 0 }, uBass: { value: 0 }, uMid: { value: 0 }, uHigh: { value: 0 },
   uSwirl: { value: 0 }, uContract: { value: 0 }, uBurst: { value: 0 }, uPixelRatio: { value: 1 }, uCamZ: { value: 4.7 }, uSize: { value: 1.75 },
   uPointer: { value: new THREE.Vector3(99, 99, 99) },
+  uPointer2: { value: new THREE.Vector3(99, 99, 99) },
   uFromHead: { value: 1 }, uToHead: { value: 1 },
   uOpen: { value: 0 }, uWide: { value: 0 }, uSmile: { value: 0 }, uPucker: { value: 0 }, uBlink: { value: 0 },
   uBrow: { value: 0 }, uNod: { value: 0 }, uTilt: { value: 0 }, uEyeGlow: { value: 0 }, uGaze: { value: new THREE.Vector2() },
@@ -165,13 +171,9 @@ function setVoice(name) {
   syncUi();
 }
 
-let captionTimer = 0;
-function showCaption(text) {
-  ui.caption.textContent = text;
-  ui.caption.classList.add('on');
-  clearTimeout(captionTimer);
-  captionTimer = setTimeout(() => ui.caption.classList.remove('on'), 4000 + text.length * 40);
-}
+// реплики Ясеня показываются по настройке субтитров; служебные сообщения и ошибки - всегда
+const showCaption = (text) => subs.say(text, 'bot');
+const toast = subs.toast;
 
 // «Демо-голос»: синтетическая огибающая, похожая на речь по слогам и паузам
 const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -222,14 +224,14 @@ function playFile(url) {
   syncUi();
   return playUrl(url, { loop: loopOn });
 }
-const playFileSafe = (url) => playFile(url).catch((e) => showCaption(`Не удалось воспроизвести: ${e.message}`));
+const playFileSafe = (url) => playFile(url).catch((e) => toast(`Не удалось воспроизвести: ${e.message}`));
 function replay() {
   if (!lastPlay) return;
   if (lastPlay.type === 'text') { startReading(); return; }
   if (audioEl && audioEl.src === lastPlay.url) {
     if (demoOn) setDemo(false);
     audioEl.currentTime = 0;
-    audioEl.play().catch((e) => showCaption(`Не удалось воспроизвести: ${e.message}`));
+    audioEl.play().catch((e) => toast(`Не удалось воспроизвести: ${e.message}`));
   } else playFileSafe(lastPlay.url);
 }
 function toggleLoop() {
@@ -255,22 +257,42 @@ window.addEventListener('drop', (e) => {
 });
 
 async function toggleMic() {
+  if (dialog.active) { dialog.stop(); syncUi(); return; }
   if (audio.micActive) { audio.stopMic(); if (state === 'listening') setState('idle'); }
   else {
     try { await audio.startMic(); sfxReady = true; setState('listening'); }
-    catch (e) { showCaption(`Микрофон недоступен: ${e.message}`); }
+    catch (e) { toast(`Микрофон недоступен: ${e.message}`); }
   }
   syncUi();
 }
 
 async function toggleCam() {
-  if (tracker.running) { tracker.stop(); camStatus = ''; }
-  else {
-    try { await tracker.start((s) => { camStatus = s; syncUi(); }); }
-    catch (e) { camStatus = ''; tracker.stop(); showCaption(`Камера/трекинг недоступны: ${e.message}`); }
+  if (tracker.running) {
+    tracker.stop(); camStatus = ''; face.mirror = null;
+  } else {
+    camUi();
+    try {
+      await tracker.start((s) => { camStatus = s; camStat.textContent = s; syncUi(); });
+      camStatus = '';
+    } catch (e) {
+      camStatus = '';
+      camStat.textContent = e.message;
+      toast(`Камера/трекинг недоступны: ${e.message}`);
+      S.set('camDebug', true);   // ошибка должна быть видна: показываем окно камеры с причиной
+    }
   }
+  camUi();
   syncUi();
 }
+
+// окно камеры: видео со скелетом; при выключенной камере скрыто (но сама камера, если включена, работает)
+const camBox = document.getElementById('camdbg'), camStat = document.getElementById('camstat');
+tracker.attach(document.getElementById('camvid'), document.getElementById('camcv'));
+function camUi() {
+  const on = S.get('camDebug') && (tracker.running || tracker.starting || !!tracker.diag.error);
+  camBox.classList.toggle('off', !on);
+}
+S.onChange((k) => { if (k === 'camDebug') camUi(); });
 
 // ---------------------------------------------------------------- мост с агентом (WebSocket)
 let ws = null;
@@ -319,7 +341,8 @@ function playAndWait(url, opts) {
   return playUrl(url, opts).then(() => new Promise((resolve, reject) => {
     const el = audioEl;
     el.addEventListener('ended', () => resolve(), { once: true });
-    el.addEventListener('pause', () => resolve(), { once: true });
+    // пауза при естественном конце приходит раньше 'ended': её не считаем, иначе состояние перезапишется позже
+    el.addEventListener('pause', () => { if (!el.ended) resolve(); }, { once: true });
     el.addEventListener('error', () => reject(new Error('не удалось воспроизвести аудио')), { once: true });
   }));
 }
@@ -365,7 +388,7 @@ function startReading() {
   reader.read(tp.text.value, { voiceId: tp.voice.value, rate: Number(tp.rate.value), loop: () => loopOn });
 }
 function stopReading() { reader.stop(); tp.progress.textContent = ''; syncUi(); }
-function openPanel(open) { tp.panel.hidden = !open; if (open) tp.text.focus(); syncUi(); }
+function openPanel(open) { panels.show('textpanel', open); if (open) tp.text.focus(); syncUi(); }
 
 async function loadTextFile(f) {
   const MAX = 300000;
@@ -397,10 +420,78 @@ tp.stop.addEventListener('click', stopReading);
 tp.close.addEventListener('click', () => openPanel(false));
 tp.file.addEventListener('change', () => { const f = tp.file.files[0]; if (f) loadTextFile(f); tp.file.value = ''; });
 
+// ---------------------------------------------------------------- диалог, характер, панели
+let hueKick = 0;         // кратковременный сдвиг оттенка при смене характера
+let personaHue = 0;      // постоянный лёгкий оттенок от черт (тепло/юмор)
+
+function speakReply(text) {
+  return reader.read(text, { voiceId: tp.voice.value, rate: Number(tp.rate.value), loop: () => false });
+}
+
+// ответ Codex: настроение лица, визуальная реакция на сдвиг характера
+function onReply(res) {
+  face.mood = res.mood;
+  applyPersona({ traits: res.traits });
+  panels.renderPersona({ ...lastPersona, traits: res.traits, memory: res.memory, turns: (lastPersona ? lastPersona.turns : 0) + 1 }, res.deltas);
+  if (Object.keys(res.deltas || {}).length || res.memoryAdded) personaPulse();
+}
+let lastPersona = null;
+
+// постоянный оттенок от черт: теплее и веселее - чуть смещаем цвет тела
+function applyPersona(state) {
+  if (!state || !state.traits) return;
+  const v = Object.fromEntries(state.traits.map((t) => [t.key, t.value]));
+  personaHue = Math.max(-0.3, Math.min(0.3, (((v.warmth ?? 55) - 55) * 0.5 + ((v.humor ?? 35) - 35) * 0.3) / 100 * 0.6));
+  lastPersona = { ...(lastPersona || {}), ...state };
+}
+
+// небольшая реакция: характер чуть сдвинулся после реплики
+function personaPulse() { hueKick = 0.8; burst = Math.max(burst, 0.3); }
+
+// системный промпт изменён: лицо пересобирается из потока с вспышкой цвета
+function reconfigure() {
+  toast('Характер обновлён: Ясень перенастраивается');
+  hueKick = 1.5;
+  burst = Math.max(burst, 0.5);
+  replayIntro(2.3);
+}
+
+const dialog = new Dialog({
+  audio,
+  setState: (n, silent) => setState(n, silent),
+  speak: (text) => speakReply(text),
+  say: (t, who) => subs.say(t, who),
+  toast,
+  onReply,
+  onChange: () => { syncUi(); micUi(); },
+});
+
+const panels = initPanels({
+  toast,
+  onPromptSaved: reconfigure,
+  onPersona: (st) => { applyPersona(st); },
+  onChange: () => syncUi(),
+});
+agent.persona().then((st) => { applyPersona(st); }).catch(() => {});   // подхватить сохранённый характер при старте
+
+async function toggleDialog() {
+  wake();
+  if (dialog.active) dialog.stop(); else await dialog.start();
+  syncUi(); micUi();
+}
+
+// индикатор микрофона: видно, слышит ли Ясень
+const mmBox = document.getElementById('micmeter'), mmFill = document.getElementById('mm-fill'), mmThr = document.getElementById('mm-thr'), mmLabel = document.getElementById('mm-label');
+const PHASES = { listening: 'слушаю', hearing: 'слышу вас', thinking: 'думаю', speaking: 'отвечаю' };
+function micUi() {
+  mmBox.hidden = !dialog.active;
+  mmLabel.textContent = PHASES[dialog.phase] || '';
+}
+
 // публичный API для отладки и встраивания
 window.orb = {
   setState, setShape, setVoice, showCaption, playUrl, setDemo, burst: (v = 1) => { burst = v; },
-  audio, face, shared, camera, reader, startReading, replay, replayIntro, STATES: Object.keys(STATES), VOICES: VOICE_NAMES,
+  audio, face, shared, camera, reader, startReading, replay, replayIntro, dialog, panels, subs, S, toast, reconfigure, personaPulse, tracker, STATES: Object.keys(STATES), VOICES: VOICE_NAMES,
 };
 
 // ---------------------------------------------------------------- UI
@@ -416,9 +507,14 @@ function syncUi() {
   q('#btn-replay').disabled = !lastPlay;
   q('#btn-loop').classList.toggle('on', loopOn);
   q('#btn-text').classList.toggle('on', !tp.panel.hidden);
+  q('#btn-dialog').classList.toggle('on', dialog.active);
+  q('#btn-subs').classList.toggle('on', S.get('subs'));
+  q('#btn-persona').classList.toggle('on', panels.isOpen('persona'));
+  q('#btn-settings').classList.toggle('on', panels.isOpen('settings'));
   tp.read.textContent = reader.running ? 'С начала' : 'Читать';
   const bits = [`<b>${STATES[state].label}</b>`, shapeName, `голос: ${VOICES[voiceName].label.toLowerCase()}`];
-  if (introT < INTRO_LEN) bits.push('сборка…');
+  if (introT < INTRO_LEN) bits.push(introSpeed > 1 ? 'перенастройка характера…' : 'сборка…');
+  if (dialog.active) bits.push(`диалог: ${PHASES[dialog.phase] || ''}`);
   if (reader.running && readProg.n) bits.push(`чтение ${readProg.i}/${readProg.n}`);
   if (wsOk) bits.push('агент подключён');
   if (camStatus) bits.push(camStatus);
@@ -435,7 +531,11 @@ q('#btn-sfx').addEventListener('click', () => { audio.sfxOn = !audio.sfxOn; sync
 q('#btn-replay').addEventListener('click', () => { wake(); replay(); });
 q('#btn-loop').addEventListener('click', toggleLoop);
 q('#btn-text').addEventListener('click', () => openPanel(tp.panel.hidden));
-q('#btn-intro').addEventListener('click', replayIntro);
+q('#btn-intro').addEventListener('click', () => replayIntro());
+q('#btn-dialog').addEventListener('click', toggleDialog);
+q('#btn-persona').addEventListener('click', () => panels.toggle('persona'));
+q('#btn-subs').addEventListener('click', () => S.set('subs', !S.get('subs')));
+q('#btn-settings').addEventListener('click', () => panels.toggle('settings'));
 
 const KEYS = { 1: 'idle', 2: 'listening', 3: 'thinking', 4: 'speaking' };
 const VOICE_KEYS = { 5: 'clean', 6: 'assistant', 7: 'vocoder', 8: 'choir' };
@@ -443,7 +543,7 @@ const SHAPE_KEYS = { q: 'head', w: 'sphere', e: 'wave', r: 'torus' };
 window.addEventListener('keydown', (e) => {
   // в полях ввода (текст, список голосов, ползунок) горячие клавиши не работают
   const tag = e.target && e.target.tagName;
-  if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') { if (e.key === 'Escape') openPanel(false); return; }
+  if (tag === 'TEXTAREA' || tag === 'INPUT' || tag === 'SELECT') { if (e.key === 'Escape') panels.closeAll(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const k = e.key.toLowerCase();
   if (introT < INTRO_LEN && (k === ' ' || k === 'escape')) { introT = INTRO_LEN; syncUi(); return; }   // пропуск интро
@@ -455,7 +555,12 @@ window.addEventListener('keydown', (e) => {
   else if (k === 'p') { wake(); replay(); }
   else if (k === 'l') toggleLoop();
   else if (k === 't') openPanel(tp.panel.hidden);
-  else if (k === 'escape') openPanel(false);
+  else if (k === 'escape') panels.closeAll();
+  else if (k === 'v') toggleDialog();
+  else if (k === 'g') panels.toggle('persona');
+  else if (k === 's') S.set('subs', !S.get('subs'));
+  else if (k === 'o') panels.toggle('settings');
+  else if (k === 'b') S.set('camDebug', !S.get('camDebug'));
   else if (k === 'm') toggleMic();
   else if (k === 'c') toggleCam();
   else if (k === 'x') { audio.sfxOn = !audio.sfxOn; syncUi(); }
@@ -493,7 +598,7 @@ const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
 const hit = new THREE.Vector3();
 let rotY = 0, rotX = 0, gestureHold = { n: -2, t: 0 };
 let simTime = 0;
-function replayIntro() { introT = 0; syncUi(); }
+function replayIntro(speed = 1) { introSpeed = speed; introT = 0; syncUi(); }
 
 function step(dt) {
   simTime += dt;
@@ -506,7 +611,8 @@ function step(dt) {
   const k = 1 - Math.exp(-dt * 4);
   shared.uAccent.value.lerp(st.accent, k);
   for (const key of ['hue', 'swirl', 'contract', 'ampGain', 'intensity', 'spin']) cur[key] += (st[key] - cur[key]) * k;
-  shared.uHue.value = cur.hue;
+  shared.uHue.value = cur.hue + personaHue + hueKick;
+  hueKick *= Math.exp(-dt * 1.1);
   shared.uSwirl.value = cur.swirl;
   shared.uContract.value = cur.contract;
   shared.uIntensity.value = cur.intensity;
@@ -521,8 +627,8 @@ function step(dt) {
   shared.uOpen.value = f.open; shared.uWide.value = f.wide; shared.uSmile.value = f.smile;
   // интро: глаза закрыты, в конце «открываются» со вспышкой
   if (introT <= INTRO_LEN + 1.2) {
-    introT += dt;
-    if (introT > INTRO_LEN && introT - dt <= INTRO_LEN) syncUi();
+    introT += dt * introSpeed;
+    if (introT > INTRO_LEN && introT - dt * introSpeed <= INTRO_LEN) { introSpeed = 1; syncUi(); }
   }
   shared.uIntroT.value = introT < INTRO_LEN ? introT : 99;
   const eyesOpen = introT >= INTRO_LEN ? 1 : smooth(INTRO_LEN - 1.4, INTRO_LEN - 0.5, introT);
@@ -544,10 +650,18 @@ function step(dt) {
 
   // трекинг: поворот головы и жесты
   let targetY = Math.sin(time * 0.3) * 0.08, targetX = 0;
+  handPtr[0] = handPtr[1] = null;
   if (tracker.running) {
     const o = tracker.update(performance.now());
     if (o.hasFace) { targetY += o.yaw * 0.7; targetX += o.pitch * 0.4; }
     handleGesture(o.fingers, dt);
+    face.mirror = S.get('mirrorFace') && o.hasFace ? o.blend : null;   // повторяем мимику пользователя, пока он молчит
+    handPointers(o);
+    if ((tickN++ & 7) === 0) camStat.textContent = tracker.statusText();
+  } else if (face.mirror) face.mirror = null;
+  if (dialog.active && (tickN & 3) === 0) {     // индикатор микрофона
+    mmFill.style.width = `${Math.min(100, (dialog.level / 0.15) * 100)}%`;
+    mmThr.style.left = `${Math.min(100, (dialog.threshold / 0.15) * 100)}%`;
   }
   const kr = 1 - Math.exp(-dt * 5);
   rotY += (targetY - rotY) * kr;
@@ -560,6 +674,23 @@ function step(dt) {
     ray.setFromCamera(pointerNdc, camera);
     if (ray.ray.intersectPlane(plane, hit)) shared.uPointer.value.copy(hit).sub(group.position);
   } else shared.uPointer.value.set(99, 99, 99);
+  // руки перед камерой отталкивают частицы, как курсор (две руки - два указателя)
+  if (handPtr[0]) shared.uPointer.value.copy(handPtr[0]).sub(group.position);
+  if (handPtr[1]) shared.uPointer2.value.copy(handPtr[1]).sub(group.position);
+  else shared.uPointer2.value.set(99, 99, 99);
+}
+
+let tickN = 0;
+const handPtr = [null, null];
+const handVec = [new THREE.Vector3(), new THREE.Vector3()];
+// кончик указательного пальца -> точка сцены (изображение с камеры зеркалим)
+function handPointers(o) {
+  const vh = 2 * camera.position.z * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+  const vw = vh * camera.aspect;
+  o.hands.slice(0, 2).forEach((h, i) => {
+    handVec[i].set((0.5 - h.tip.x) * vw, (0.5 - h.tip.y) * vh, 0);
+    handPtr[i] = handVec[i];
+  });
 }
 
 let frozen = false;   // отладка: orb.freeze(true) останавливает анимацию, кадры рисуются вручную через orb.advance

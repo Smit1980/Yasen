@@ -47,14 +47,74 @@
   #textpanel input[type=range] { width: 110px; accent-color: var(--accent); }
   #tp-note { font-size: 11px; color: var(--dim); }
   #tp-progress { font-size: 11px; color: var(--dim); }
+
+  /* субтитры: по умолчанию середина экрана справа от лица */
+  #subs { position: fixed; z-index: 4; display: flex; flex-direction: column; gap: 12px; pointer-events: none; }
+  #subs.off { display: none; }
+  #subs.pos-right { left: calc(50% + 28vh); right: 3%; top: 50%; transform: translateY(-50%); align-items: flex-start; text-align: left; }
+  #subs.pos-left { left: 3%; right: calc(50% + 28vh); top: 50%; transform: translateY(-50%); align-items: flex-end; text-align: right; }
+  #subs.pos-bottom { left: 50%; bottom: 96px; transform: translateX(-50%); width: min(80vw, 760px); align-items: center; text-align: center; }
+  @media (max-aspect-ratio: 4/5) {
+    #subs.pos-right, #subs.pos-left { left: 50%; right: auto; top: auto; bottom: 96px; transform: translateX(-50%);
+      width: min(90vw, 560px); align-items: center; text-align: center; }
+  }
+  #subs .line { font-size: 19px; line-height: 1.35; color: #e6f6ff; text-shadow: 0 0 18px rgba(60,170,255,.55), 0 1px 3px #000;
+    animation: subin .35s ease-out; transition: opacity .9s; }
+  #subs .line.user { font-size: 15px; color: #8fb3cc; }
+  #subs .line.user::before { content: "Вы: "; opacity: .7; }
+  #subs .line.out { opacity: 0; }
+  @keyframes subin { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+  #toast { position: fixed; left: 50%; bottom: 84px; transform: translateX(-50%); max-width: min(86vw, 640px); z-index: 6;
+    padding: 8px 14px; border-radius: 10px; background: rgba(6,14,26,.86); border: 1px solid rgba(255,170,80,.35);
+    color: #ffe2bf; font-size: 13px; text-align: center; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.on { opacity: 1; }
+  /* окно камеры: видео + скелет рук и контуры лица */
+  #camdbg { position: fixed; left: 14px; bottom: 14px; width: 300px; z-index: 5; border-radius: 12px; overflow: hidden;
+    border: 1px solid rgba(80,160,255,.3); background: #000; }
+  #camdbg.off { left: -2000px; opacity: 0; pointer-events: none; }
+  #camdbg .frame { position: relative; aspect-ratio: 16/9; }
+  #camdbg video, #camdbg canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+  #camstat { padding: 5px 8px; font-size: 10px; line-height: 1.35; color: #9fc4de; background: rgba(6,14,26,.9); }
+  /* индикатор микрофона в диалоге */
+  #micmeter { position: fixed; left: 50%; top: 14px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px;
+    font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--dim); }
+  #micmeter[hidden] { display: none; }
+  #micmeter .mbar { position: relative; width: 120px; height: 6px; border-radius: 3px; background: rgba(80,160,255,.18); }
+  #micmeter .mbar i { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 3px; background: var(--accent); transition: width .08s; }
+  #micmeter .mbar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: rgba(255,170,80,.9); }
+  /* панели «Характер» и «Настройки» */
+  .panel { position: fixed; right: 18px; top: 44px; width: min(440px, 92vw); max-height: calc(100vh - 150px); overflow: auto; z-index: 5;
+    display: flex; flex-direction: column; gap: 8px; padding: 12px; background: rgba(6,14,26,.86); border: 1px solid rgba(80,160,255,.28);
+    border-radius: 14px; backdrop-filter: blur(10px); }
+  .panel[hidden] { display: none; }
+  .panel .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .panel .row.head { justify-content: space-between; }
+  .panel .lbl { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-top: 4px; }
+  .panel textarea, .panel input[type=text] { width: 100%; font: inherit; color: var(--fg); background: rgba(2,8,18,.7);
+    border: 1px solid rgba(80,160,255,.25); border-radius: 9px; padding: 8px 10px; }
+  #pp-prompt { min-height: 190px; resize: vertical; font-size: 12px; line-height: 1.4; }
+  #st-log { font-size: 11px; min-height: 110px; resize: vertical; }
+  .panel select { font: inherit; color: var(--fg); background: rgba(40,90,150,.25); border: 1px solid rgba(80,160,255,.25);
+    border-radius: 9px; padding: 5px 8px; }
+  .panel .chk { display: flex; gap: 8px; align-items: center; cursor: pointer; }
+  .panel .note, #pp-note { font-size: 11px; color: var(--dim); white-space: pre-line; }
+  #pp-note.bad { color: #ff9a8a; }
+  .trait { display: grid; grid-template-columns: 110px 1fr 74px; gap: 8px; align-items: center; font-size: 12px; }
+  .trait .tbar { height: 6px; border-radius: 3px; background: rgba(80,160,255,.18); overflow: hidden; }
+  .trait .tbar i { display: block; height: 100%; background: linear-gradient(90deg, #3ab0ff, #ffb04a); transition: width .8s; }
+  .trait em { font-style: normal; text-align: right; color: var(--dim); }
+  .trait small { color: #ffb04a; }
+  .trait.flash .tbar { box-shadow: 0 0 10px rgba(255,176,74,.8); }
+  #pp-memory { margin: 0; padding-left: 18px; font-size: 12px; color: #a9c8de; max-height: 120px; overflow: auto; }
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
 <div id="vignette"></div>
 <div id="status"></div>
-<div id="hint">H — скрыть панель · F — во весь экран · панель прячется сама, двиньте мышью</div>
-<div id="caption"></div>
+<div id="hint">H — скрыть панель · F — во весь экран · V — диалог · S — субтитры</div>
+<div id="subs" class="pos-right"></div>
+<div id="toast"></div>
 
 <div id="bar">
   <button data-state="idle">Покой<kbd>1</kbd></button>
@@ -79,6 +139,11 @@
   <button id="btn-loop" title="Повторять непрерывно">Цикл<kbd>L</kbd></button>
   <button id="btn-text" title="Загрузить текст и читать вслух">Текст<kbd>T</kbd></button>
   <button id="btn-intro" title="Показать сборку лица из потока заново">Интро<kbd>I</kbd></button>
+  <div class="sep"></div>
+  <button id="btn-dialog" title="Голосовой диалог с Ясенем: слышит вас, отвечает через Codex">Диалог<kbd>V</kbd></button>
+  <button id="btn-persona" title="Характер и системный промпт">Характер<kbd>G</kbd></button>
+  <button id="btn-subs" title="Субтитры вкл/выкл">Субтитры<kbd>S</kbd></button>
+  <button id="btn-settings" title="Настройки: субтитры, диалог, камера">Настройки<kbd>O</kbd></button>
   <button id="btn-cam">Камера<kbd>C</kbd></button>
   <button id="btn-sfx" class="on">Звуки<kbd>X</kbd></button>
 </div>
@@ -92,6 +157,44 @@
     <label>Скорость <input id="tp-rate" type="range" min="-5" max="5" value="0"></label>
   </div>
   <div class="row"><button id="tp-read">Читать</button><button id="tp-stop">Стоп</button><span id="tp-note"></span></div>
+</section>
+
+<div id="camdbg" class="off"><div class="frame"><video id="camvid" muted playsinline></video><canvas id="camcv"></canvas></div><div id="camstat">камера выключена</div></div>
+<div id="micmeter" hidden><span id="mm-label">слушаю</span><div class="mbar"><i id="mm-fill"></i><b id="mm-thr"></b></div></div>
+
+<section id="persona" class="panel" hidden aria-label="Характер Ясеня">
+  <div class="row head"><b>Характер Ясеня</b><button data-close="persona" aria-label="Закрыть панель">×</button></div>
+  <div class="lbl">Системный промпт</div>
+  <textarea id="pp-prompt" spellcheck="false"></textarea>
+  <div class="row"><button id="pp-save">Применить</button><button id="pp-default">Исходный промпт</button><span id="pp-note"></span></div>
+  <div class="lbl">Черты характера</div>
+  <div id="pp-traits"></div>
+  <label class="chk"><input type="checkbox" id="pp-learn"> Характер меняется от общения</label>
+  <div class="lbl">Что Ясень помнит о вас <span id="pp-turns"></span></div>
+  <ul id="pp-memory"></ul>
+  <div class="row"><button id="pp-reset">Сбросить черты и память</button></div>
+</section>
+
+<section id="settings" class="panel" hidden aria-label="Настройки">
+  <div class="row head"><b>Настройки</b><button data-close="settings" aria-label="Закрыть панель">×</button></div>
+  <div class="lbl">Субтитры</div>
+  <label class="chk"><input type="checkbox" id="st-subs"> Показывать субтитры</label>
+  <div class="row"><label>Положение
+    <select id="st-pos"><option value="right">Справа от лица (по умолчанию)</option><option value="left">Слева от лица</option><option value="bottom">Внизу по центру</option></select></label></div>
+  <label class="chk"><input type="checkbox" id="st-user"> Показывать и мои слова</label>
+  <div class="lbl">Диалог</div>
+  <div class="row">
+    <label>Язык речи <select id="st-lang"><option value="ru">Русский</option><option value="en">English</option><option value="auto">Авто</option></select></label>
+    <label>Глубина Codex <select id="st-effort"><option value="low">низкая (быстрее)</option><option value="medium">средняя</option><option value="high">высокая</option></select></label>
+  </div>
+  <div class="row"><label style="flex:1">Модель Codex <input type="text" id="st-model" placeholder="по умолчанию"></label></div>
+  <label class="chk"><input type="checkbox" id="st-filler"> Короткая реплика, пока Ясень думает</label>
+  <div class="note" id="st-info">…</div>
+  <div class="lbl">Камера</div>
+  <label class="chk"><input type="checkbox" id="st-camdbg"> Показывать окно камеры (видео, руки, лицо)</label>
+  <label class="chk"><input type="checkbox" id="st-mirror"> Повторять мою мимику, когда я молчу</label>
+  <div class="row"><button id="st-diag">Проверить камеру</button><button id="st-diagcopy">Копировать отчёт</button></div>
+  <textarea id="st-log" readonly placeholder="Здесь появится отчёт диагностики камеры"></textarea>
 </section>
 
 <script type="module" src="src/main.js"></script>

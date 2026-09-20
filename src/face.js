@@ -2,6 +2,16 @@
 // получаем параметры лица для шейдера: рот, ширина губ, улыбка, брови, веки, кивки, взгляд.
 // tone: -1 (тёмный звук «у/о» - губы трубочкой) ... +1 (яркий «и/с» - губы шире).
 
+// смещения по настроению ответа (пока Ясень говорит)
+const MOODS = {
+  calm: { smile: 0, brow: 0, tilt: 0, gy: 0 },
+  warm: { smile: 0.15, brow: 0.1, tilt: 0.01, gy: 0 },
+  playful: { smile: 0.3, brow: 0.2, tilt: 0.03, gy: 0 },
+  curious: { smile: 0.05, brow: 0.35, tilt: 0.05, gy: 0 },
+  serious: { smile: -0.1, brow: -0.2, tilt: 0, gy: 0 },
+  thoughtful: { smile: 0, brow: -0.1, tilt: -0.03, gy: 0.01 },
+};
+
 const follow = (cur, target, rate, dt) => cur + (target - cur) * (1 - Math.exp(-rate * dt));
 
 export class Face {
@@ -20,6 +30,8 @@ export class Face {
     this.prevLevel = 0;
     this.emph = 0;
     this.override = null;   // для отладки: принудительные значения параметров
+    this.mood = 'calm';     // настроение последнего ответа
+    this.mirror = null;     // мимика пользователя с камеры {open, smile, blink, brow, pucker}
   }
 
   update(dt, { state, level, tone }) {
@@ -70,6 +82,18 @@ export class Face {
       gx = -0.02; gy = 0.018;
     }
 
+    // ---- настроение ответа (пока говорит) и повтор мимики пользователя (пока он молчит)
+    if (speaking) {
+      const m = MOODS[this.mood] || MOODS.calm;
+      smileT += m.smile; browT += m.brow; tiltT += m.tilt; gy += m.gy;
+    }
+    let mirrorBlink = 0;
+    if (this.mirror && !speaking && state !== 'thinking') {
+      const b = this.mirror;
+      openT = b.open * 0.9; smileT = 0.05 + b.smile * 0.6; browT = b.brow * 0.8; puckerT = b.pucker * 0.6;
+      mirrorBlink = b.blink;
+    }
+
     // ---- моргание: 2.5-6 с, иногда двойное
     this.blinkIn -= dt;
     if (this.blinkT < 0 && this.blinkIn <= 0) {
@@ -87,6 +111,8 @@ export class Face {
         this.doubleBlink = false;
       }
     }
+
+    blinkShape = Math.max(blinkShape, mirrorBlink);
 
     // ---- взгляд: лёгкие случайные сдвиги
     this.gazeIn -= dt;
