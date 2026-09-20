@@ -118,7 +118,7 @@ export async function loadPortrait(url, { count = 440000, seed = 5 } = {}) {
   // ---- 2. губы: верхняя кромка, линия смыкания, нижняя кромка
   const [mx, my] = LM_PX.mouth, a = LM_PX.mouthHW;
   const h = (t) => 1 - t * t;
-  arc(1100, (t) => [mx + a * t, my - 3 - 13 * Math.pow(h(t), 0.9) + 6 * Math.exp(-((t / 0.2) ** 2))], 4, [0.22, 0.52, 0.95], 0.7, 1, 0.04);
+  arc(1100, (t) => [mx + a * t, my - 3 - 13 * Math.pow(h(t), 0.9) + 6 * Math.exp(-((t / 0.2) ** 2))], 3, [0.22, 0.52, 0.95], 0.7, 1, 0.04);
   arc(700, (t) => [mx + a * t, my + 2.5 * h(t)], 3.5, [0.2, 0.48, 0.9], 0.6, 1, 0.04);
   arc(1300, (t) => [mx + a * t, my + 4 + 17 * Math.pow(h(t), 0.85)], 4, [0.22, 0.52, 0.95], 0.7, 1, 0.04);
 

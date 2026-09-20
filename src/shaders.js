@@ -91,16 +91,20 @@ vec3 faceDelta(vec3 r, out float glow) {
   vec2 q = r.xy - uMouth;
   float a = uMouthHW;
   float xw = abs(q.x) / a;
-  float jx = exp(-(q.x * q.x) / (2.0 * (a * 1.9) * (a * 1.9)));
-  float below = 1.0 - smoothstep(-0.05, 0.02, q.y);
+  // челюсть: сдвигается нижняя часть лица в узкой полосе вокруг рта, контур щёк почти не двигается
+  float jx = exp(-(q.x * q.x) / (2.0 * (a * 1.15) * (a * 1.15)));
+  float below = 1.0 - smoothstep(-0.03, 0.01, q.y);
   float jy = smoothstep(uNeckY, uChinY, r.y);
   float jaw = below * jx * jy;
-  d.y -= uOpen * 0.115 * jaw;
-  d.z += uOpen * 0.02 * jaw;
+  d.y -= uOpen * 0.07 * jaw;
+  // при открытии уголки рта слегка стягиваются к центру
+  float cornerPull = exp(-(q.x * q.x) / (2.0 * a * a * 1.6) - (q.y * q.y) / (2.0 * 0.09 * 0.09));
+  d.x -= q.x * uOpen * 0.12 * cornerPull;
 
-  float upY = (q.y - 0.035) / 0.04;
+  // верхняя губа почти неподвижна
+  float upY = (q.y - 0.02) / 0.03;
   float upM = exp(-xw * xw) * exp(-upY * upY);
-  d.y += uOpen * 0.022 * upM;
+  d.y += uOpen * 0.008 * upM;
 
   float wm = exp(-(q.x * q.x) / (2.0 * a * a * 2.4) - (q.y * q.y) / (2.0 * 0.12 * 0.12));
   d.x += q.x * (uWide - uPucker * 0.4) * wm;
@@ -183,7 +187,7 @@ void main() {
       vis = 0.22 * smoothstep(0.1, 0.5, uOpen);
     } else {
       p += faceDelta(aRest, glow) * headW;
-      if (aRegion > 0.5 && aRegion < 1.5) vis = 0.10 + 0.08 * uOpen;
+      if (aRegion > 0.5 && aRegion < 1.5) vis = 0.16 + 0.10 * uOpen;
       else if (aRegion > 3.5 && aRegion < 4.5) vis = 0.08 + 0.1 * abs(uBrow);
       else if (aRegion > 4.5) vis = 0.03 + 0.25 * smoothstep(0.05, 0.55, uBlink);
     }
@@ -203,10 +207,12 @@ void main() {
   p += nrm * (n - 0.5) * 0.03 * (1.0 + uHigh * 4.0) * wob;
 
   // голос: общая амплитуда и кольцевые волны от низких частот
-  p += nrm * uAmp * (0.03 + 0.14 * aSeed.y) * kindAmp * wob;
+  // соседние частицы двигаются вместе (согласованный шум), без случайного разлёта на частицу
+  float vb = vnoise(p * 1.3 + vec3(0.0, uTime * 1.1, 3.0));
+  p += nrm * (uAmp * 0.035 + (vb - 0.5) * uAmp * 0.05) * kindAmp * wob;
   float d = length(p - vec3(0.0, -0.9, 0.0));
-  p += nrm * sin(d * 8.0 - uTime * 5.0) * uBass * 0.05 * kindAmp * wob;
-  p += nrm * (aSeed.z - 0.5) * uMid * 0.09 * wob;
+  p += nrm * sin(d * 8.0 - uTime * 5.0) * uBass * 0.018 * kindAmp * wob;
+  p += nrm * (vnoise(p * 3.0 + vec3(0.0, uTime * 2.0, 7.0)) - 0.5) * uMid * 0.04 * wob;
 
   // thinking: закручивание вокруг вертикальной оси
   float ang = uSwirl * (0.3 * sin(uTime * 1.2 + p.y * 3.0) + 0.3 * aSeed.y) * wob;
@@ -248,7 +254,7 @@ void main() {
   // размер: у редких далёких частиц - «боке»
   float far = smoothstep(0.55, 1.2, length(aRest.xy));
   float bok = step(0.985, fract(aSeed.x * 7.31 + aSeed.y * 3.17)) * far;
-  float sizeK = (0.55 + 0.9 * aSeed.z) * (1.0 + bok * 3.2) * mix(1.0, 0.95, isCore) * (1.0 + uAmp * 0.25);
+  float sizeK = (0.55 + 0.9 * aSeed.z) * (1.0 + bok * 3.2) * mix(1.0, 0.95, isCore) * (1.0 + uAmp * 0.1);
   gl_PointSize = uSize * uPixelRatio * sizeK * 0.00375 * (uCamZ / -mv.z) * mix(1.0, 3.6, uGlow);
 
   // цвет: тело - из картинки с поворотом оттенка, акцент (оранжевый) - по состоянию
